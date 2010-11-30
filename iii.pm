@@ -18,6 +18,7 @@ sub new {
   $self->{_lpass}    = shift;
   
   $self->{_at_main_menu} = 1;
+  $self->{_list_is_open} = 0;
   
   $self->{_timeout}  = shift || 2;
   
@@ -48,15 +49,15 @@ sub list_open {
   my $list_name   = shift;
   
   if ( ! $self->{_at_main_menu} ) {
-    die 'iii:open_list() must only be called from the main menu';
+    confess 'iii:open_list() must only be called from the main menu';
   }
   
   if ( $list_number !~ /^\d+$/ ) {
-    die '$list_number must be an integer';
+    confess '$list_number must be an integer';
   }
   
   if ( ! defined $list_name ) {
-    die '$list_name required';
+    confess '$list_name required';
   }
   
   $list_number = sprintf( '%03d', $list_number );  # pad with zeroes
@@ -70,11 +71,14 @@ sub list_open {
   
   # FIXME: will very long names wrap to the next line and break this?
   my @expected = (
+    [ 'locked this file' => sub { confess 'File locked' } ],
     [ 'file, ' . $list_name . ',' => sub {} ],  # has expected name
     [ 'Create a new' => sub {} ]  # is Empty
   );
   
   $self->_seod( $list_number, @expected );
+  
+  $self->{_list_is_open} = 1;
 }
 
 sub list_new {
@@ -90,6 +94,43 @@ sub list_new {
   }
   
   $self->_seod( $type, 'BOOLEAN SEARCH' );
+}
+
+sub list_from_saved {
+  my $self         = shift;
+  my $query_number = shift;
+  my $query_name   = shift;
+  
+  if ( ! $self->{_list_is_open} ) {
+    confess 'iii:list_from_saved() must only be called when a list is open';
+  }
+  
+  $self->_seod( '%', 'PREVIOUSLY' );
+  
+  my $query_found = 0;
+  
+  if ( $self->_blob() !~ /$query_number \> $query_name/ ) {
+    for ( my $i = 0; $i < 10; $i++ ) {  # arbitrary number of tries
+      if ( $self->_se( 'f', "$query_number > $query_name" ) ) {
+        $query_found = 1;
+        last;
+      }
+    }
+  }
+
+  if ( ! $query_found ) {
+    confess 'Could not find specified query';
+  }
+  
+  my @expected = (
+    [ 'At least one field' => sub {
+      $self->_seod( '1', 'Enter action' )
+    } ],  # FIXME: kluge to get past this oddly-timed prompt
+    
+    [ 'that satisfy' => sub {} ]
+  );
+  
+  $self->_seod( $query_number, @expected );
 }
 
 sub _lines {
@@ -181,9 +222,9 @@ sub _dump {
   my $self  = shift;
   my $value = shift;
   
-  open EDUMP, '>expect_dump.txt' or die 'Error opening dump file';
-  
-  print EDUMP $value;
+  open DUMP, '>expect_dump.txt' or die 'Error opening dump file';
+  print DUMP $value;
+  close DUMP;
   
   confess 'Dieing after dump';
 }
