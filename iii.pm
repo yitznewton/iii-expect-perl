@@ -41,6 +41,24 @@ sub login {
   return 1;
 }
 
+sub logout {
+  my $self = shift;
+  
+  if ( ! $self->{_at_main_menu} ) {
+    confess 'Can only logout from main menu';
+  }
+  
+  if ( $self->_blob() =~ /X \> DISCONNECT/ ) {
+    $self->_s( 'x' );
+  }
+  else {
+    $self->_s( 'q' );
+  }
+  
+  sleep 2;
+  $self->{_e}->hard_close();
+}
+
 sub list_open {
   # opens list if name matches or is Empty
   my $self = shift;
