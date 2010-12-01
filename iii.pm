@@ -133,6 +133,78 @@ sub list_from_saved {
   $self->_seod( $query_number, @expected );
 }
 
+sub list_add_condition {
+  # $value must include a carriage return and
+  # "All fields/At least one field" setting if applicable
+  
+  my $self       = shift;
+  
+  my $boolean    = shift;
+  my $field_code = shift;
+  my $condition  = shift;
+  my $value      = shift;
+  
+  if ( ! $self->{_list_is_open} ) {
+    confess 'iii:list_from_saved() must only be called when a list is open';
+  }
+  
+  if ( $boolean ) {
+    $self->_seod( $boolean, 'Enter code' );
+  }
+  
+  # TODO: allow for more complex fields like MARC
+  $self->_seod( $field_code, 'boolean condition' );
+  
+  my @conditions = (
+    [ ' = '             => sub {} ],
+    [ ' <> '            => sub {} ],
+    [ ' < '             => sub {} ],
+    [ ' > '             => sub {} ],
+    [ ' <= '            => sub {} ],
+    [ ' >= '            => sub {} ],
+    [ ' between '       => sub {} ],
+    [ ' not within '    => sub {} ],
+    [ ' has '           => sub {} ],
+    [ ' does not have ' => sub {} ]
+  );
+  
+  $self->_seod( $condition, @conditions );
+  $self->_seod( $value, 'Enter action' );
+}
+
+sub list_start {
+  my $self = shift;
+  my $list_name = shift;
+  
+  if ( ! $self->{_list_is_open} ) {
+    confess 'iii:list_from_saved() must only be called when a list is open';
+  }
+
+  $self->_seod( 's', 'What name' );
+  $self->_seod( $list_name . chr(13), 'Type "s"' );
+  
+  my $initial_timeout = $self->{_timeout};
+  $self->{_timeout} = 7200;  # one hour
+  $self->_eod( 'SEARCH COMPLETE' );
+  $self->_seod( ' ', 'LIST RECORDS' );
+}
+
+sub list_close {
+  my $self = shift;
+
+  if ( ! $self->{_list_is_open} ) {
+    confess 'iii:list_from_saved() must only be called when a list is open';
+  }
+
+  $self->_seod( 'q', 'Select review file' );
+  $self->{_list_is_open} = 0;
+  
+  $self->_seod( 'q', 'MANAGEMENT' );
+  
+  $self->_seod( 'q', 'MAIN MENU' );
+  $self->{_at_main_menu} = 1;
+}
+
 sub _lines {
   my $self = shift;
   
@@ -191,7 +263,7 @@ sub _se {
 sub _eod {
   # Expect Or Die
 
-  my $self   = shift;
+  my $self     = shift;
   my @expected = @_;
 
   if ( ! $self->_e( @expected ) ) {
@@ -211,18 +283,13 @@ sub _seod {
   $self->_eod( @expected );  
 }
 
-sub _edump {
+sub _dump {
   # for debugging
   
-  my $self = shift;
-  $self->_dump( $self->_blob() );
-}
-
-sub _dump {
   my $self  = shift;
   my $value = shift;
   
-  open DUMP, '>expect_dump.txt' or die 'Error opening dump file';
+  open DUMP, '>expect_dump.txt' or confess 'Error opening dump file';
   print DUMP $value;
   close DUMP;
   
