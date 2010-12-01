@@ -8,21 +8,28 @@ use Data::Dumper;
 use Carp;
 
 sub new {
-  my $class = shift;
-  my $self = {};
+  my $class   = shift;
+  my $self    = {};
+  my %options = @_;
 
-  $self->{_server}   = shift;
-  $self->{_initials} = shift;
-  $self->{_ipass}    = shift;
-  $self->{_login}    = shift;  # TODO: add support for installations which bypass login
-  $self->{_lpass}    = shift;
+  # don't cluck/confess here as it prints the credentials
+  $self->{_server}   = $options{'server'}   or croak 'Bad iii options';
+  $self->{_protocol} = $options{'protocol'} or croak 'Bad iii options';
+  $self->{_initials} = $options{'initials'} or croak 'Bad iii options';
+  $self->{_ipass}    = $options{'ipass'}    or croak 'Bad iii options';
   
-  $self->{_at_main_menu} = 1;
+  # TODO: add support for installations which bypass login
+  $self->{_login}    = $options{'login'}    or croak 'Bad iii options';
+  $self->{_lpass}    = $options{'lpass'}    or croak 'Bad iii options';
+  
+  $self->{_output}   = $options{'output'} || 0;
+  
+  $self->{_at_main_menu} = 0;
   $self->{_list_is_open} = 0;
   
-  $self->{_timeout}  = shift || 2;
+  $self->{_timeout} = defined $options{'timeout'} ? $options{'timeout'} : 2;
   
-  $self->{_e} = new Expect( 'telnet ' . $self->{_server} );
+  $self->{_e} = new Expect( $self->{_protocol} . ' ' . $self->{_server} );
   
   bless ( $self, $class );
   return $self;
@@ -31,6 +38,9 @@ sub new {
 sub login {
   my $self  = shift;
 
+  $self->{_e} = new Expect( $self->{_protocol} . ' ' . $self->{_server} );
+  $self->{_e}->log_stdout( $self->{_output} );
+  
   $self->_eod( 'login' );
   
   $self->_seod( $self->{_login} . chr(13), 'Password' );
@@ -57,6 +67,18 @@ sub logout {
   
   sleep 2;
   $self->{_e}->hard_close();
+}
+
+sub output {
+  my $self  = shift;
+  my $value = shift;
+  
+  if ( $value == 0 || $value == 1 ) {
+    $self->{_e}->log_stdout( $value );
+  }
+  else {
+    confess 'Invalid setting for iii::output()';
+  }
 }
 
 sub list_open {
@@ -202,8 +224,11 @@ sub list_start {
   $self->_seod( $list_name . chr(13), 'Type "s"' );
   
   my $initial_timeout = $self->{_timeout};
+  
   $self->{_timeout} = 7200;  # one hour
   $self->_eod( 'SEARCH COMPLETE' );
+  $self->{_timeout} = $initial_timeout;
+  
   $self->_seod( ' ', 'LIST RECORDS' );
 }
 
