@@ -86,8 +86,8 @@ sub list_open {
   # opens list if name matches or is Empty
   my $self = shift;
   
-  my $list_number = shift;
-  my $list_name   = shift;
+  my $list_number = shift or confess 'List number not specified';
+  my $list_name   = shift or confess 'List name not specified';
   
   if ( ! $self->{_at_main_menu} ) {
     confess 'iii:open_list() must only be called from the main menu';
@@ -124,7 +124,7 @@ sub list_open {
 
 sub list_new {
   my $self = shift;
-  my $type = shift;
+  my $type = shift or confess 'List type not specified';
   
   if ( $self->_blob() =~ /2 > Create/ ) {
     $self->_seod( '2', 'Choose what kind' );
@@ -139,8 +139,8 @@ sub list_new {
 
 sub list_from_saved {
   my $self         = shift;
-  my $query_number = shift;
-  my $query_name   = shift;
+  my $query_number = shift or confess 'Query number not specified';
+  my $query_name   = shift or confess 'Query name not specified';
   
   if ( ! $self->{_list_is_open} ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
@@ -180,10 +180,10 @@ sub list_add_condition {
   
   my $self       = shift;
   
-  my $boolean    = shift;
-  my $field_code = shift;
-  my $condition  = shift;
-  my $value      = shift;
+  my $boolean    = shift or confess 'Boolean not specified';
+  my $field_code = shift or confess 'Field code not specified';
+  my $condition  = shift or confess 'Condition not specified';
+  my $value      = shift or confess 'Value not specified';
   
   if ( ! $self->{_list_is_open} ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
@@ -215,7 +215,7 @@ sub list_add_condition {
 
 sub list_start {
   my $self = shift;
-  my $list_name = shift;
+  my $list_name = shift or confess 'List name not specified';
   
   if ( ! $self->{_list_is_open} ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
@@ -271,13 +271,11 @@ sub output_marc_start {
 sub output_marc_create {
   my $self = shift;
   
-  my $filename  = shift;
-  my $source    = shift;
-  my $list_name = shift;
+  my $filename  = shift or confess 'Filename not specified';
+  my $source    = shift or confess 'Source not specified';
+  my $list_name = shift or confess 'List name not specified';
   my $overwrite = shift || 0;
 
-  my $list_number;
-  
   if ( ! $self->{_at_output_marc} ) {
     confess 'Must be at output MARC to create MARC file';
   }
@@ -319,20 +317,9 @@ sub output_marc_create {
   
   $self->_seod( $source, @expected );
   
-  while (1) {
-    if ( $self->_blob() =~ /(\d+) \> $list_name\e/ ) {
-      $list_number = $1;
-      last;
-    }
-    
-    $self->_s( 'f' );
-    
-    if ( ! $self->_e( ' > ' ) ) {
-      last;
-    }
-  }
+  my $list_number = $self->_list_number( $list_name );
   
-  if ( ! defined $list_number ) {
+  if ( ! $list_number ) {
     carp "List '$list_name' not found";
     return 0;
   }
@@ -357,25 +344,27 @@ sub output_marc_create {
 sub output_marc_send {
   my $self = shift;
   
-  my $filename  = shift or confess;
-  my $host      = shift or confess;
-  my $username  = shift or confess;
-  my $password  = shift or confess;
+  my $filename  = shift or confess 'Filename not specified';
+  my $host      = shift or confess 'Host not specified';
+  my $username  = shift or confess 'Username not specified';
+  my $password  = shift or confess 'Password not specified';
   
   if ( ! $self->{_at_output_marc} ) {
     confess 'Must be at output MARC to send MARC file';
   }
   
-  if ( ! $self->_blob() =~ /(\d+) \> $filename\e/ ) {
+  if ( ! ( $self->_blob() =~ /(\d+) \> $filename\.out\e/ ) ) {
     carp "Filename '$filename' not found";
     return 0;
   }
+  
+  my $file_number = $1;
   
   $self->_seod( 's', 'Enter file number' );
   
   $self->{_at_output_marc} = 0;
   
-  $self->_seod( $1, 'FILE TRANSFER' );
+  $self->_seod( $file_number, 'FILE TRANSFER' );
   
   if ( ! $self->_blob() =~ /(\d+) \> $host\e/ ) {
     carp "Host '$host' not found";
@@ -435,6 +424,28 @@ sub _lines {
   return @good_lines;
 }
 
+sub _list_number {
+  # scans a list of review files for one with a given name -
+  # for use within other functions where only non-empty lists
+  # are displayed, so the list number is unpredictable.
+  # GOTCHA: list name must be unique
+  
+  my $self      = shift;
+  my $list_name = shift or confess 'List name not specified';
+  
+  while (1) {
+    if ( $self->_blob() =~ /(\d+) \> $list_name\e/ ) {
+      return $1;
+    }
+    
+    $self->_s( 'f' );
+    
+    if ( ! $self->_e( ' > ' ) ) {
+      return 0;
+    }
+  }
+}
+
 sub _blob {
   my $self = shift;
   
@@ -443,7 +454,7 @@ sub _blob {
 
 sub _s {
   my $self = shift;
-  my $send = shift;
+  my $send = shift or confess 'Input not specified';
   
   $self->{_e}->send( $send );
 }
@@ -467,8 +478,8 @@ sub _se {
   
   my $self = shift;
   
-  my $send     = shift;
-  my @expected = @_;
+  my $send     = shift or confess 'Input not specified';
+  my @expected = @_ or confess 'No conditions specified';
   
   $self->_s( $send );
   $self->_e( @expected );  
@@ -478,7 +489,7 @@ sub _eod {
   # Expect Or Die
 
   my $self     = shift;
-  my @expected = @_;
+  my @expected = @_ or confess 'No conditions specified';
 
   if ( ! $self->_e( @expected ) ) {
     confess 'Died at unExpected point';
