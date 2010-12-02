@@ -354,7 +354,7 @@ sub output_marc_create {
   return 1;
 }
 
-sub output_marc_create {
+sub output_marc_send {
   my $self = shift;
   
   my $filename  = shift or confess;
@@ -366,7 +366,40 @@ sub output_marc_create {
     confess 'Must be at output MARC to send MARC file';
   }
   
+  if ( ! $self->_blob() =~ /(\d+) \> $filename\e/ ) {
+    carp "Filename '$filename' not found";
+    return 0;
+  }
   
+  $self->_seod( 's', 'Enter file number' );
+  
+  $self->{_at_output_marc} = 0;
+  
+  $self->_seod( $1, 'FILE TRANSFER' );
+  
+  if ( ! $self->_blob() =~ /(\d+) \> $host\e/ ) {
+    carp "Host '$host' not found";
+    
+    $self->_seod( 'q', 'SPACE' );
+    $self->_seod( ' ', 'Output MARC' );
+    
+    $self->{_at_output_marc} = 1;
+    return 0;
+  }
+  
+  $self->_seod( $1, 'Username' );
+  $self->_seod( $username . chr(13), 'Password' );
+  
+  my $initial_timeout = $self->{_timeout};
+  
+  $self->{_timeout} = 120;
+  $self->_seod( $password . chr(13), 'SOMETHING' );  # TODO: when ftp issue resolved
+  $self->{_timeout} = $initial_timeout;
+  
+  # TODO: finish when ftp issue resolved
+  
+  $self->{_at_output_marc} = 1;
+  return 1;
 }
 
 sub output_marc_end {
@@ -481,4 +514,3 @@ sub _dump {
 }
 
 1;
-
