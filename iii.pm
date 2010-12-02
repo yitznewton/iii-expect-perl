@@ -26,6 +26,7 @@ sub new {
   
   $self->{_at_main_menu} = 0;
   $self->{_list_is_open} = 0;
+  $self->{_at_output_marc} = 0;
   
   $self->{_timeout} = defined $options{'timeout'} ? $options{'timeout'} : 2;
   
@@ -248,6 +249,143 @@ sub list_close {
   $self->{_at_main_menu} = 1;
 }
 
+sub output_marc_start {
+  my $self = shift;
+  
+  if ( ! $self->{_at_main_menu} ) {
+    confess 'Can only start output from main menu';
+  }
+
+  $self->_seod( 'a', 'ADDITIONAL' );
+  
+  $self->{_at_main_menu} = 0;
+  
+  $self->_seod( 'm', 'initials' );
+  $self->_seod( $self->{_initials} . chr(13), 'password' );
+  $self->_seod( $self->{_ipass} . chr(13), 'READ/WRITE' );
+  $self->_seod( 'a', 'Output MARC' );
+  
+  $self->{_at_output_marc} = 1;
+}
+
+sub output_marc_create {
+  my $self = shift;
+  
+  my $filename  = shift;
+  my $source    = shift;
+  my $list_name = shift;
+  my $overwrite = shift || 0;
+
+  my $list_number;
+  
+  if ( ! $self->{_at_output_marc} ) {
+    confess 'Must be at output MARC to create MARC file';
+  }
+  
+  if ( $source ne 'b' && $source ne 'r' ) {  # boolean or range
+    confess 'Invalid MARC record source';
+  }
+  
+  $self->_seod( 'c', 'Enter name' );
+  $self->{_at_output_marc} = 0;
+  
+  my $already_exists;
+  
+  my @expected = (
+    [ 'Specify records' => sub { $already_exists = 0; } ],
+    [ 'already exists'  => sub { $already_exists = 1; } ]
+  );
+  
+  $self->_seod( $filename . chr(13), @expected );
+  
+  if ( $already_exists ) {
+    if ( $overwrite ) {
+      $self->_seod( 'y', 'overwrite' );
+      $self->_seod( 'y', 'Specify records' );
+    }
+    else {
+      $self->_seod( 'n', 'CREATE' );
+      $self->{_at_output_marc} = 1;
+      
+      carp "MARC file $filename already exists; not overwriting";
+      return 0;
+    }
+  }
+  
+  @expected = (
+    [ 'Select review file' => sub {} ],
+    [ 'Present range'      => sub { confess 'not yet supported' } ]
+  );
+  
+  $self->_seod( $source, @expected );
+  
+  while (1) {
+    if ( $self->_blob() =~ /(\d+) \> $list_name\e/ ) {
+      $list_number = $1;
+      last;
+    }
+    
+    $self->_s( 'f' );
+    
+    if ( ! $self->_e( ' > ' ) ) {
+      last;
+    }
+  }
+  
+  if ( ! defined $list_number ) {
+    carp "List '$list_name' not found";
+    return 0;
+  }
+  
+  $self->_seod( $list_number, 'START sending' );
+  
+  my $initial_timeout = $self->{_timeout};
+  
+  $self->{_timeout} = 120;
+  $self->_seod( 's', 'CONVERSION STATISTICS' );
+  $self->{_timeout} = $initial_timeout;
+  
+  $self->_seod( 'q', 'SPACE' );
+  $self->_seod( ' ', 'QUIT' );
+  $self->_seod( 'q', 'SPACE' );
+  $self->_seod( ' ', 'Output MARC' );
+  
+  $self->{_at_output_marc} = 1;
+  return 1;
+}
+
+sub output_marc_create {
+  my $self = shift;
+  
+  my $filename  = shift or confess;
+  my $host      = shift or confess;
+  my $username  = shift or confess;
+  my $password  = shift or confess;
+  
+  if ( ! $self->{_at_output_marc} ) {
+    confess 'Must be at output MARC to send MARC file';
+  }
+  
+  
+}
+
+sub output_marc_end {
+  my $self = shift;
+  
+  if ( ! $self->{_at_output_marc} ) {
+    confess 'Must be at output MARC to end outputting MARC';
+  }
+
+  $self->_seod( 'q', 'READ/WRITE' );
+
+  $self->{_at_output_marc} = 0;
+
+  $self->_seod( 'q', 'ADDITIONAL' );
+  $self->_seod( 'q', 'MAIN MENU' );
+  
+  $self->{_at_main_menu} = 1;
+}
+
 sub _lines {
   my $self = shift;
   
@@ -329,14 +467,17 @@ sub _seod {
 sub _dump {
   # for debugging
   
-  my $self  = shift;
-  my $value = shift;
+  my $self       = shift;
+  my $value      = shift;
+  my $should_die = shift || 0;
   
-  open DUMP, '>expect_dump.txt' or confess 'Error opening dump file';
+  open DUMP, '>>expect_dump.txt' or confess 'Error opening dump file';
   print DUMP $value;
   close DUMP;
   
-  confess 'Dieing after dump';
+  if ( $should_die ) {
+    confess 'Dieing after dump';
+  }
 }
 
 1;
