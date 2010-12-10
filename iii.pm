@@ -7,6 +7,12 @@ use Expect;
 use Data::Dumper;
 use Carp;
 
+use constant STATE_UNDEFINED   => 0;
+use constant STATE_MAIN_MENU   => 1;
+use constant STATE_RECORD_OPEN => 2;
+use constant STATE_LIST_OPEN   => 3;
+use constant STATE_OUTPUT_MARC => 4;
+
 sub new {
   my $class   = shift;
   my $self    = {};
@@ -24,9 +30,7 @@ sub new {
   
   $self->{_output}   = $options{'output'} || 0;
   
-  $self->{_at_main_menu} = 0;
-  $self->{_list_is_open} = 0;
-  $self->{_at_output_marc} = 0;
+  $self->{_state};
   
   $self->{_timeout} = defined $options{'timeout'} ? $options{'timeout'} : 2;
   
@@ -47,7 +51,7 @@ sub login {
   $self->_seod( $self->{_login} . chr(13), 'Password' );
   $self->_seod( $self->{_lpass} . chr(13), 'MAIN' );
   
-  $self->{_at_main_menu} = 1;
+  $self->{_state} = STATE_MAIN_MENU;
   
   return 1;
 }
@@ -55,7 +59,7 @@ sub login {
 sub logout {
   my $self = shift;
   
-  if ( ! $self->{_at_main_menu} ) {
+  if ( $self->{_state} != STATE_MAIN_MENU ) {
     confess 'Can only logout from main menu';
   }
   
@@ -89,7 +93,7 @@ sub list_open {
   my $list_number = shift or confess 'List number not specified';
   my $list_name   = shift or confess 'List name not specified';
   
-  if ( ! $self->{_at_main_menu} ) {
+  if ( $self->{_state} != STATE_MAIN_MENU ) {
     confess 'iii:open_list() must only be called from the main menu';
   }
   
@@ -104,7 +108,7 @@ sub list_open {
   $list_number = sprintf( '%03d', $list_number );  # pad with zeroes
   
   $self->_seod( 'M', 'MANAGEMENT' );
-  $self->{_at_main_menu} = 0;
+  $self->{_state} = STATE_UNDEFINED;
   
   $self->_seod( 'L', 'initials' );
   $self->_seod( $self->{_initials} . chr(13), 'password' );
@@ -119,7 +123,7 @@ sub list_open {
   
   $self->_seod( $list_number, @expected );
   
-  $self->{_list_is_open} = 1;
+  $self->{_state} = STATE_LIST_OPEN;
 }
 
 sub list_new {
@@ -142,7 +146,7 @@ sub list_from_saved {
   my $query_number = shift or confess 'Query number not specified';
   my $query_name   = shift or confess 'Query name not specified';
   
-  if ( ! $self->{_list_is_open} ) {
+  if ( $self->{_state} != STATE_LIST_OPEN ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
   }
   
@@ -185,7 +189,7 @@ sub list_add_condition {
   my $condition  = shift or confess 'Condition not specified';
   my $value      = shift or confess 'Value not specified';
   
-  if ( ! $self->{_list_is_open} ) {
+  if ( $self->{_state} != STATE_LIST_OPEN ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
   }
   
@@ -217,7 +221,7 @@ sub list_start {
   my $self = shift;
   my $list_name = shift or confess 'List name not specified';
   
-  if ( ! $self->{_list_is_open} ) {
+  if ( $self->{_state} != STATE_LIST_OPEN ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
   }
 
@@ -236,36 +240,36 @@ sub list_start {
 sub list_close {
   my $self = shift;
 
-  if ( ! $self->{_list_is_open} ) {
+  if ( $self->{_state} != STATE_LIST_OPEN ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
   }
 
   $self->_seod( 'q', 'Select review file' );
-  $self->{_list_is_open} = 0;
+  $self->{_state} = STATE_UNDEFINED;
   
   $self->_seod( 'q', 'MANAGEMENT' );
   
   $self->_seod( 'q', 'MAIN MENU' );
-  $self->{_at_main_menu} = 1;
+  $self->{_state} = STATE_MAIN_MENU;
 }
 
 sub output_marc_start {
   my $self = shift;
   
-  if ( ! $self->{_at_main_menu} ) {
+  if ( $self->{_state} != STATE_MAIN_MENU ) {
     confess 'Can only start output from main menu';
   }
 
   $self->_seod( 'a', 'ADDITIONAL' );
   
-  $self->{_at_main_menu} = 0;
+  $self->{_state} = STATE_UNDEFINED;
   
   $self->_seod( 'm', 'initials' );
   $self->_seod( $self->{_initials} . chr(13), 'password' );
   $self->_seod( $self->{_ipass} . chr(13), 'READ/WRITE' );
   $self->_seod( 'a', 'Output MARC' );
   
-  $self->{_at_output_marc} = 1;
+  $self->{_state} = STATE_OUTPUT_MARC;
 }
 
 sub output_marc_create {
@@ -276,7 +280,7 @@ sub output_marc_create {
   my $list_name = shift or confess 'List name not specified';
   my $overwrite = shift || 0;
 
-  if ( ! $self->{_at_output_marc} ) {
+  if ( $self->{_state} != STATE_OUTPUT_MARC ) {
     confess 'Must be at output MARC to create MARC file';
   }
   
@@ -285,7 +289,7 @@ sub output_marc_create {
   }
   
   $self->_seod( 'c', 'Enter name' );
-  $self->{_at_output_marc} = 0;
+  $self->{_state} = STATE_UNDEFINED;
   
   my $already_exists;
   
@@ -303,7 +307,7 @@ sub output_marc_create {
     }
     else {
       $self->_seod( 'n', 'CREATE' );
-      $self->{_at_output_marc} = 1;
+      $self->{_state} = STATE_OUTPUT_MARC;
       
       carp "MARC file $filename already exists; not overwriting";
       return 0;
@@ -337,7 +341,7 @@ sub output_marc_create {
   $self->_seod( 'q', 'SPACE' );
   $self->_seod( ' ', 'Output MARC' );
   
-  $self->{_at_output_marc} = 1;
+  $self->{_state} = STATE_OUTPUT_MARC;
   return 1;
 }
 
@@ -349,7 +353,7 @@ sub output_marc_send {
   my $username  = shift or confess 'Username not specified';
   my $password  = shift or confess 'Password not specified';
   
-  if ( ! $self->{_at_output_marc} ) {
+  if ( $self->{_state} != STATE_OUTPUT_MARC ) {
     confess 'Must be at output MARC to send MARC file';
   }
   
@@ -362,7 +366,7 @@ sub output_marc_send {
   
   $self->_seod( 's', 'Enter file number' );
   
-  $self->{_at_output_marc} = 0;
+  $self->{_state} = STATE_UNDEFINED;
   
   $self->_seod( $file_number, 'FILE TRANSFER' );
   
@@ -387,25 +391,39 @@ sub output_marc_send {
   
   # TODO: finish when ftp issue resolved
   
-  $self->{_at_output_marc} = 1;
+  $self->{_state} = STATE_OUTPUT_MARC;
   return 1;
 }
 
 sub output_marc_end {
   my $self = shift;
   
-  if ( ! $self->{_at_output_marc} ) {
+  if ( $self->{_state} != STATE_OUTPUT_MARC ) {
     confess 'Must be at output MARC to end outputting MARC';
   }
 
   $self->_seod( 'q', 'READ/WRITE' );
 
-  $self->{_at_output_marc} = 0;
+  $self->{_state} = STATE_UNDEFINED;
 
   $self->_seod( 'q', 'ADDITIONAL' );
   $self->_seod( 'q', 'MAIN MENU' );
   
-  $self->{_at_main_menu} = 1;
+  $self->{_state} = STATE_MAIN_MENU;
+}
+
+sub record_open {
+  my $self  = shift;
+  my $index = shift;
+  my $value = shift;
+}
+
+sub record_fixed_field {
+  my $self = shift;
+}
+
+sub record_close {
+  my $self = shift;
 }
 
 sub _lines {
