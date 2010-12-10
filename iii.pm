@@ -7,11 +7,12 @@ use Expect;
 use Data::Dumper;
 use Carp;
 
-use constant STATE_UNDEFINED   => 0;
-use constant STATE_MAIN_MENU   => 1;
-use constant STATE_RECORD_OPEN => 2;
-use constant STATE_LIST_OPEN   => 3;
-use constant STATE_OUTPUT_MARC => 4;
+use constant STATE_UNDEFINED      => 0;
+use constant STATE_MAIN_MENU      => 1;
+use constant STATE_RECORD_OPEN    => 2;
+use constant STATE_LIST_OPEN      => 3;
+use constant STATE_OUTPUT_MARC    => 4;
+use constant STATE_UPDATE_RECORDS => 5;
 
 sub new {
   my $class   = shift;
@@ -412,18 +413,136 @@ sub output_marc_end {
   $self->{_state} = STATE_MAIN_MENU;
 }
 
+sub update_records_start {
+  my $self = shift;
+  
+  if ( $self->{_state} != STATE_MAIN_MENU ) {
+    confess 'Must be at main menu to update records';
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+  
+  $self->_seod( 'd', 'DATABASE MAINTENANCE' );
+  $self->_seod( 'u', 'initials' );
+  $self->_seod( $self->{_initials} . chr(13), 'password' );
+  $self->_seod( $self->{_ipass} . chr(13), 'Update:' );
+  $self->_seod( 'b', 'record do you want' );  # using b arbitrarily
+  
+  $self->{_state} = STATE_UPDATE_RECORDS;
+}
+
+sub update_records_end {
+  my $self = shift;
+  
+  if ( $self->{_state} != STATE_UPDATE_RECORDS ) {
+    confess 'Must be at update records to end updating records';
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+  
+  $self->_seod( chr(13), 'or QUIT' );
+  $self->_seod( 'q', 'DATABASE MAINTENANCE' );
+  $self->_seod( 'q', 'MAIN MENU' );
+  
+  $self->{_state} = STATE_MAIN_MENU;
+}
+
 sub record_open {
   my $self  = shift;
   my $index = shift;
   my $value = shift;
+  
+  if ( $self->{_state} != STATE_UPDATE_RECORDS ) {
+    confess 'Must be at update records to open record';
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+  
+  my @expected = (
+    [ 'To modify' => sub {} ],
+    
+    [ 'Waiting' => sub {
+      carp 'Record in use: ' . $index . $value;
+      $self->_s( ' ' );  # FIXME: should be _seod()
+    }],
+    
+    [ 'would be here' => sub {
+      carp 'Record does not exist: ' . $index . $value;
+      $self->_s( 'q' );  # FIXME: should be _seod()
+    }],
+
+    [ 'deleted' => sub {
+      carp 'Record deleted: ' . $index . $value;
+      $self->_s( ' ' );  # FIXME: _seod()
+    }],
+    
+    [ timeout => sub {
+      # unexpected error
+      confess 'Unknown state attempting to open ' . $index . $value;
+    }]
+  );
+  
+  $self->_seod( $index . $value . chr(13), @expected );
+  
+  $self->{_state} = STATE_RECORD_OPEN;
 }
 
 sub record_fixed_field {
-  my $self = shift;
+  my $self      = shift;
+  my $code      = shift;
+  my $new_value = shift;
+  
+  my $old_value;
+  
+  if ( ! defined $code ) {
+    confess 'Code must be defined';
+  }
+  
+  if ( $self->{_state} != STATE_RECORD_OPEN ) {
+    confess 'Must have record open to access fixed field';
+  }
+
+  if ( $self->_blob() =~ /(\d+) $code: ([\S]+)/ ) {
+    $old_value = $2;
+  }
+  elsif ( $self->_blob() =~ /(\d+) $code:/ ) {
+    $old_value = ' ';  # could be space or null; client code will need to handle
+  }
+  else {
+    carp "Field '$code' not found";
+  }
+  
+  if ( ! defined $new_value ) {    
+    return $old_value;
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+  
+  $self->_seod( $1, $code );
+  $self->_seod( $new_value, 'To modify' );
+  
+  $self->{_state} = STATE_RECORD_OPEN;
 }
 
 sub record_close {
-  my $self = shift;
+  my $self      = shift;
+  my $edit_mode = shift || 'e';
+  
+  if ( $self->{_state} != STATE_RECORD_OPEN ) {
+    confess 'Must have record open to close record';
+  }
+
+  my @expected = (
+    [ '<SPACE>' => sub { $self->_s(' '); exp_continue; }],  # invalid field
+    [ 'EXIT'    => sub { $self->_s( $edit_mode ); }],       # record was modified
+    [ 'QUIT'    => sub { $self->_s('q'); }],                # record was not modified
+    [ timeout   => sub { $self->_s( $edit_mode ); }]
+  );
+  
+  $self->_seod( 'q', @expected );
+  $self->_eod( 'Record:' );
+  
+  $self->{_state} = STATE_UPDATE_RECORDS;
 }
 
 sub _lines {
