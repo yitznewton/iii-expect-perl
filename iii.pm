@@ -71,7 +71,7 @@ sub logout {
     $self->_s( 'q' );
   }
   
-  sleep 2;
+  sleep $self->{_timeout};
   $self->{_e}->hard_close();
 }
 
@@ -268,7 +268,7 @@ sub output_marc_start {
   $self->_seod( 'm', 'initials' );
   $self->_seod( $self->{_initials} . chr(13), 'password' );
   $self->_seod( $self->{_ipass} . chr(13), 'READ/WRITE' );
-  $self->_seod( 'a', 'Output MARC' );
+  $self->_seod( 'a', 'SEND a MARC file' );
   
   $self->{_state} = STATE_OUTPUT_MARC;
 }
@@ -333,7 +333,7 @@ sub output_marc_create {
   
   my $initial_timeout = $self->{_timeout};
   
-  $self->{_timeout} = 120;
+  $self->{_timeout} = 600;
   $self->_seod( 's', 'CONVERSION STATISTICS' );
   $self->{_timeout} = $initial_timeout;
   
@@ -349,10 +349,11 @@ sub output_marc_create {
 sub output_marc_send {
   my $self = shift;
   
-  my $filename  = shift or confess 'Filename not specified';
-  my $host      = shift or confess 'Host not specified';
-  my $username  = shift or confess 'Username not specified';
-  my $password  = shift or confess 'Password not specified';
+  my $filename         = shift or confess 'Filename not specified';
+  my $host             = shift or confess 'Host not specified';
+  my $remote_username  = shift or confess 'Username not specified';
+  my $remote_password  = shift or confess 'Password not specified';
+  my $remote_path      = shift;
   
   if ( $self->{_state} != STATE_OUTPUT_MARC ) {
     confess 'Must be at output MARC to send MARC file';
@@ -369,28 +370,47 @@ sub output_marc_send {
   
   $self->{_state} = STATE_UNDEFINED;
   
-  $self->_seod( $file_number, 'FILE TRANSFER' );
+  my $initial_timeout = $self->{_timeout};
+  $self->{_timeout} = 10;
   
-  if ( ! $self->_blob() =~ /(\d+) \> $host\e/ ) {
+  $self->_seod( $file_number, 'Key a number' );
+
+  if ( $self->_blob() !~ /(\d+) \> $host\e/ ) {
     carp "Host '$host' not found";
     
     $self->_seod( 'q', 'SPACE' );
     $self->_seod( ' ', 'Output MARC' );
     
-    $self->{_at_output_marc} = 1;
+    $self->{_state} = STATE_OUTPUT_MARC;
     return 0;
   }
   
   $self->_seod( $1, 'Username' );
-  $self->_seod( $username . chr(13), 'Password' );
+  $self->_seod( $remote_username . chr(13), 'Password' );
   
-  my $initial_timeout = $self->{_timeout};
-  
-  $self->{_timeout} = 120;
-  $self->_seod( $password . chr(13), 'SOMETHING' );  # TODO: when ftp issue resolved
+  $self->_seod( $remote_password . chr(13), 'Put File At' );  # TODO: when ftp issue resolved
   $self->{_timeout} = $initial_timeout;
   
-  # TODO: finish when ftp issue resolved
+  if ( $remote_path ) {
+    $self->_seod( 'd', 'REMOTE' );
+    $self->_seod( 'c', 'ENTER a path name' );
+    $self->_seod( 'e', 'Enter path name' );
+    $self->_seod( $remote_path . chr(13), 'Choose one' );  # TODO: does this work with multiple levels of directories?
+    $self->_seod( 'v', 'Choose one' );
+    sleep $self->{_timeout};
+  }
+  
+  $self->_seod( 't', 'Enter name' );
+
+  $initial_timeout = $self->{_timeout};
+  $self->{_timeout} = 600;
+  $self->_seod( chr(13), 'CONTINUE' );
+  $self->{_timeout} = $initial_timeout;
+  
+  $self->_seod( 'c', 'Choose one' );
+  sleep $self->{_timeout};
+  $self->_seod( 'q', 'SPACE' );
+  $self->_seod( ' ', 'Output' );  
   
   $self->{_state} = STATE_OUTPUT_MARC;
   return 1;
