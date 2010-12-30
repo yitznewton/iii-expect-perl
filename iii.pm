@@ -435,6 +435,7 @@ sub output_marc_end {
 
 sub update_records_start {
   my $self = shift;
+  my $record_type = shift || 'b';
   
   if ( $self->{_state} != STATE_MAIN_MENU ) {
     confess 'Must be at main menu to update records';
@@ -446,7 +447,7 @@ sub update_records_start {
   $self->_seod( 'u', 'initials' );
   $self->_seod( $self->{_initials} . chr(13), 'password' );
   $self->_seod( $self->{_ipass} . chr(13), 'Update:' );
-  $self->_seod( 'b', 'record do you want' );  # using b arbitrarily
+  $self->_seod( $record_type, 'record do you want' );
   
   $self->{_state} = STATE_UPDATE_RECORDS;
 }
