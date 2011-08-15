@@ -218,6 +218,28 @@ sub list_add_condition {
   $self->_seod( $value, 'Enter action' );
 }
 
+sub list_set_range {
+  my $self = shift;
+  
+  my $range_start = shift;
+  my $range_end = shift;
+  
+  if ( $self->{_state} != STATE_LIST_OPEN ) {
+    confess 'iii:list_set_range() must only be called when a list is open';
+  }
+
+  $self->{_state} = STATE_UNDEFINED;
+  
+  $self->_seod( '\\', 'Search records' );
+  $self->_seod( 'n', 'Enter starting' );
+  $self->_seod( $range_start . chr(13), 'Enter ending' );
+  $self->_seod( $range_end . chr(13), 'Use scoped' );
+  $self->_seod( 'n', 'correct' );
+  $self->_seod( 'y', 'Enter action' );
+  
+  $self->{_state} = STATE_LIST_OPEN;
+}
+
 sub list_start {
   my $self = shift;
   my $list_name = shift or confess 'List name not specified';
