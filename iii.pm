@@ -7,12 +7,14 @@ use Expect;
 use Data::Dumper;
 use Carp;
 
-use constant STATE_UNDEFINED      => 0;
-use constant STATE_MAIN_MENU      => 1;
-use constant STATE_RECORD_OPEN    => 2;
-use constant STATE_LIST_OPEN      => 3;
-use constant STATE_OUTPUT_MARC    => 4;
-use constant STATE_UPDATE_RECORDS => 5;
+use constant STATE_UNDEFINED                => 0;
+use constant STATE_MAIN_MENU                => 1;
+use constant STATE_RECORD_OPEN              => 2;
+use constant STATE_LIST_OPEN                => 3;
+use constant STATE_OUTPUT_MARC              => 4;
+use constant STATE_UPDATE_RECORDS           => 5;
+use constant STATE_LIST_OUTPUT_FIELD_SELECT => 6;
+use constant STATE_OUTPUT_HOST_SELECT       => 7;
 
 sub new {
   my $class   = shift;
@@ -147,6 +149,14 @@ sub list_from_saved {
   my $query_number = shift or confess 'Query number not specified';
   my $query_name   = shift or confess 'Query name not specified';
   
+  if ( $query_number !~ /^\d{1,4}$/ ) {
+    confess 'Invalid query number';
+  }
+  
+  if ( $query_name !~ /^.{1,60}$/ ) {
+    confess 'Invalid query name';
+  }
+  
   if ( $self->{_state} != STATE_LIST_OPEN ) {
     confess 'iii:list_from_saved() must only be called when a list is open';
   }
@@ -177,6 +187,118 @@ sub list_from_saved {
   );
   
   $self->_seod( $query_number, @expected );
+}
+
+sub list_output_open {
+  my $self = shift;
+  
+  if ( $self->{_state} != STATE_LIST_OPEN ) {
+    confess 'iii:list_output() must only be called when a list is open';
+  }
+  
+  $self->_seod( 'u', 'CREATE' );
+  
+  $self->{_state} = STATE_UNDEFINED;
+  
+  my @conditions = (
+    [ 'maximum number of files' => sub {
+      $self->_seod( ' ', 'CREATE' );
+      $self->_seod( 'q', 'Display review' );
+      $self->{_state} = STATE_LIST_OPEN;
+      
+      confess 'Output file list full';
+    }],
+    [ 'Output Item' => sub {} ]
+  );
+  
+  $self->_seod( 'c', @conditions );
+
+  $self->{_state} = STATE_LIST_OUTPUT_FIELD_SELECT;
+}
+
+sub list_output_send {
+  my $self = shift;
+
+  my $filename         = shift or confess 'Filename not specified';
+  my $host             = shift or confess 'Host not specified';
+  my $remote_username  = shift or confess 'Username not specified';
+  my $remote_password  = shift or confess 'Password not specified';
+  my $remote_path      = shift;
+
+  if ( $self->{_state} != STATE_LIST_OUTPUT_FIELD_SELECT ) {
+    confess 'iii:list_output_send() must only be called when a list is open for output';
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+  
+  my $initial_timeout = $self->{_timeout};
+  $self->{_timeout} = 30;
+  
+  $self->_seod( chr(10), 'RECORD FORMAT' );
+  $self->_seod( 'c', 'File name' );
+  $self->_seod( $filename . chr(13), 'Output the file' );
+  $self->_seod( 'y', 'Key a number' );
+  
+  $self->{_state} = STATE_OUTPUT_HOST_SELECT;
+  $self->_output_login( $host, $remote_username, $remote_password, $remote_path );
+  
+  $self->{_timeout} = $initial_timeout;
+  
+  $self->_seod( 't', 'Enter name' );
+  $self->_seod( $filename . chr(13), 'CONTINUE' );
+  $self->_seod( 'c', 'Key a number' );
+  $self->_seod( 'q', 'Your review file' );
+  
+  # delete the file on iii server
+  $self->_seod( 'o', 'DELETE' );
+  
+  if ( $self->_blob() =~ /(\d+) \> $filename\.out/ ) {
+    $self->_seod( 'd', 'Delete which' );
+    $self->_seod( $1, 'Are you sure' );
+    $self->_seod( 'y', 'OUTPUT' );
+  }
+  else {
+    carp 'Could not delete file; continuing execution';
+  }
+  
+  $self->_seod( 'q', 'Your review file' );
+  $self->_seod( 'q', 'LIST RECORDS' );
+  
+  $self->{_state} = STATE_LIST_OPEN;
+}
+
+sub list_output_add_field {
+  my $self = shift;
+  
+  my $field_number = shift;
+  my $field_name   = shift;
+  
+  if ( $self->{_state} != STATE_LIST_OUTPUT_FIELD_SELECT ) {
+    confess 'iii:list_output_add_field() must only be called when a list is open for output';
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+
+  $self->_seod( $field_number, $field_name );
+  
+  $self->{_state} = STATE_LIST_OUTPUT_FIELD_SELECT;
+}
+
+sub list_output_add_field_marc {
+  my $self = shift;
+  
+  my $marc_tag = shift;
+  
+  if ( $self->{_state} != STATE_LIST_OUTPUT_FIELD_SELECT ) {
+    confess 'iii:list_output_add_field_marc() must only be called when a list is open for output';
+  }
+
+  $self->{_state} = STATE_UNDEFINED;
+
+  $self->_seod( '!', 'MARC TAG' );
+  $self->_seod( $marc_tag . chr(13), $marc_tag );
+  
+  $self->{_state} = STATE_LIST_OUTPUT_FIELD_SELECT;
 }
 
 sub list_add_condition {
@@ -397,30 +519,9 @@ sub output_marc_send {
   
   $self->_seod( $file_number, 'Key a number' );
 
-  if ( $self->_blob() !~ /(\d+) \> $host\e/ ) {
-    carp "Host '$host' not found";
-    
-    $self->_seod( 'q', 'SPACE' );
-    $self->_seod( ' ', 'Output MARC' );
-    
-    $self->{_state} = STATE_OUTPUT_MARC;
-    return 0;
-  }
+  $self->{_state} = STATE_OUTPUT_HOST_SELECT;
   
-  $self->_seod( $1, 'Username' );
-  $self->_seod( $remote_username . chr(13), 'Password' );
-  
-  $self->_seod( $remote_password . chr(13), 'Put File At' );  # TODO: when ftp issue resolved
-  $self->{_timeout} = $initial_timeout;
-  
-  if ( $remote_path ) {
-    $self->_seod( 'd', 'REMOTE' );
-    $self->_seod( 'c', 'ENTER a path name' );
-    $self->_seod( 'e', 'Enter path name' );
-    $self->_seod( $remote_path . chr(13), 'Choose one' );  # TODO: does this work with multiple levels of directories?
-    $self->_seod( 'v', 'Choose one' );
-    sleep $self->{_timeout};
-  }
+  $self->_output_login( $host, $remote_username, $remote_password, $remote_path );
   
   $self->_seod( 't', 'Enter name' );
 
@@ -623,6 +724,45 @@ sub _list_number {
     if ( ! $self->_e( ' > ' ) ) {
       return 0;
     }
+  }
+}
+
+sub _output_login {
+  my $self = shift;
+  
+  my $host             = shift or confess 'Host not specified';
+  my $remote_username  = shift or confess 'Username not specified';
+  my $remote_password  = shift or confess 'Password not specified';
+  my $remote_path      = shift;
+  
+  if ( $self->{_state} != STATE_OUTPUT_HOST_SELECT ) {
+    confess 'Current state does not support host selection';
+  }
+  
+  $self->{_state} = STATE_UNDEFINED;
+
+  if ( $self->_blob() !~ /(\d+) \> $host\e/ ) {
+    carp "Host '$host' not found";
+    
+    $self->_seod( 'q', 'SPACE' );
+    $self->_seod( ' ', 'Output MARC' );
+    
+    $self->{_state} = STATE_OUTPUT_MARC;
+    return 0;
+  }
+  
+  $self->_seod( $1, 'Username' );
+  $self->_seod( $remote_username . chr(13), 'Password' );
+  
+  $self->_seod( $remote_password . chr(13), 'Put File At' );
+  
+  if ( $remote_path ) {
+    $self->_seod( 'd', 'REMOTE' );
+    $self->_seod( 'c', 'ENTER a path name' );
+    $self->_seod( 'e', 'Enter path name' );
+    $self->_seod( $remote_path . chr(13), 'Choose one' );  # TODO: does this work with multiple levels of directories?
+    $self->_seod( 'v', 'Choose one' );
+    sleep 5;
   }
 }
 
